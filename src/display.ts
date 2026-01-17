@@ -86,22 +86,22 @@ export function renderTable(
     // Find max memory for scaling bars
     const maxMemory = Math.max(...processes.map((p) => p.memoryMB), 100);
 
-    // Table header
+    // Table header with box drawing
+    lines.push(pc.dim("  ┌" + "─".repeat(128) + "┐"));
     const header =
       pc.bold(
         padRight("PID", 8) +
-        padRight("SCRIPT/PROCESS", 45) +
-        padRight("CPU", 10) +
-        padRight("CPU BAR", 14) +
-        padRight("MEMORY", 12) +
-        padRight("MEM BAR", 14) +
-        "TREND"
+        padRight("SCRIPT/PROCESS", 55) +
+        padRight("CPU", 18) +
+        padRight("MEMORY", 22) +
+        padRight("HISTORY", 25)
       );
-    lines.push("  " + header);
-    lines.push("  " + pc.gray("─".repeat(115)));
+    lines.push(pc.dim("  │ ") + header + pc.dim(" │"));
+    lines.push(pc.dim("  ├" + "─".repeat(128) + "┤"));
 
     // Process rows
-    for (const proc of processes) {
+    for (let i = 0; i < processes.length; i++) {
+      const proc = processes[i];
       const hist = history.get(proc.pid);
       const prevMemory = hist && hist.memoryHistory.length > 1
         ? hist.memoryHistory[hist.memoryHistory.length - 2]
@@ -113,30 +113,53 @@ export function renderTable(
       // Extract script name from command, fall back to process name
       const scriptName = extractScriptName(proc.cmd);
       const displayName = scriptName
-        ? formatScriptName(scriptName, 44)
-        : proc.name.substring(0, 44);
+        ? formatScriptName(scriptName, 54)
+        : proc.name.substring(0, 54);
 
-      const row =
-        padRight(String(proc.pid), 8) +
-        padRight(displayName, 45) +
-        cpuColor(padRight(formatCPU(proc.cpu), 10)) +
-        getColoredCPUBar(proc.cpu, 10) + "  " +
-        memoryColor(padRight(formatMemory(proc.memory), 12)) +
-        getColoredMemoryBar(proc.memoryMB, maxMemory, 10) + "  " +
+      // CPU section: value + bar
+      const cpuStr = cpuColor(proc.cpu.toFixed(1).padStart(5) + "%") + " " + getColoredCPUBar(proc.cpu, 10);
+
+      // Memory section: value + bar + trend
+      const memStr = memoryColor(formatMemory(proc.memory).padStart(9)) + " " +
+        getColoredMemoryBar(proc.memoryMB, maxMemory, 10) + " " +
         getTrendIndicator(proc.memoryMB, prevMemory);
 
-      lines.push("  " + row);
+      // History sparkline
+      const sparkline = hist && hist.memoryHistory.length > 1
+        ? getColoredSparkline(hist.memoryHistory, 24)
+        : pc.dim("░".repeat(24));
 
-      // Sparkline row if we have history
-      if (hist && hist.memoryHistory.length > 1) {
-        const sparkline = getColoredSparkline(hist.memoryHistory, 30);
-        lines.push("  " + pc.gray("        ") + sparkline);
+      // Alternate row styling: even rows get a subtle marker
+      const rowMarker = i % 2 === 0 ? " " : pc.dim("░");
+
+      const row =
+        rowMarker +
+        pc.cyan(padRight(String(proc.pid), 7)) +
+        padRight(displayName, 55) +
+        cpuStr + "  " +
+        memStr + "  " +
+        sparkline;
+
+      lines.push(pc.dim("  │") + row + pc.dim(" │"));
+
+      // Add a subtle separator line between rows (except after last row)
+      if (i < processes.length - 1) {
+        lines.push(pc.dim("  │ " + "·".repeat(126) + " │"));
       }
     }
 
+    lines.push(pc.dim("  └" + "─".repeat(128) + "┘"));
     lines.push("");
+
+    // Summary stats
+    const totalCPU = processes.reduce((a, p) => a + p.cpu, 0);
+    const totalMem = processes.reduce((a, p) => a + p.memoryMB, 0);
     lines.push(
-      pc.gray(`  ${processes.length} process(es) | Press Ctrl+C to stop`)
+      pc.dim("  ") +
+      pc.white(`${processes.length}`) + pc.dim(" processes") +
+      pc.dim("  │  CPU: ") + pc.cyan(totalCPU.toFixed(1) + "%") +
+      pc.dim("  │  Memory: ") + pc.cyan(totalMem.toFixed(0) + " MB") +
+      pc.dim("  │  Press ") + pc.yellow("Ctrl+C") + pc.dim(" to stop")
     );
   }
 
@@ -170,7 +193,7 @@ export function renderSummary(history: Map<number, ProcessHistory>): void {
     pc.bold(
       "  " +
       padRight("PID", 8) +
-      padRight("SCRIPT/PROCESS", 47) +
+      padRight("SCRIPT/PROCESS", 62) +
       padRight("SAMPLES", 10) +
       padRight("AVG CPU", 12) +
       padRight("PEAK CPU", 12) +
@@ -178,7 +201,7 @@ export function renderSummary(history: Map<number, ProcessHistory>): void {
       padRight("PEAK MEM", 12)
     )
   );
-  console.log("  " + pc.gray("─".repeat(112)));
+  console.log("  " + pc.gray("─".repeat(127)));
 
   for (const [pid, hist] of history) {
     const avgCPU =
@@ -188,7 +211,7 @@ export function renderSummary(history: Map<number, ProcessHistory>): void {
 
     const row =
       padRight(String(pid), 8) +
-      padRight(hist.name.substring(0, 46), 47) +
+      padRight(hist.name.substring(0, 61), 62) +
       padRight(String(hist.samples), 10) +
       padRight(formatCPU(avgCPU), 12) +
       padRight(formatCPU(hist.peakCPU), 12) +

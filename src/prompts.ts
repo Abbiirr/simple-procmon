@@ -5,6 +5,7 @@ export interface ProcessSelection {
   processType: string;
   processNames: string[];
   filterPattern?: string;
+  dockerMode?: boolean;
 }
 
 const PROCESS_PRESETS: Record<string, string[]> = {
@@ -17,6 +18,8 @@ const PROCESS_PRESETS: Record<string, string[]> = {
   php: ["php", "php.exe", "php-cgi", "php-cgi.exe"],
   bun: ["bun", "bun.exe"],
   deno: ["deno", "deno.exe"],
+  // Docker - monitors all processes (filtering done in monitor.ts with --docker flag)
+  docker: ["*"],
 };
 
 export async function selectProcess(): Promise<ProcessSelection | null> {
@@ -34,6 +37,7 @@ export async function selectProcess(): Promise<ProcessSelection | null> {
       { value: "php", label: "PHP processes", hint: "php" },
       { value: "bun", label: "Bun processes", hint: "bun" },
       { value: "deno", label: "Deno processes", hint: "deno" },
+      { value: "docker", label: "Docker containers", hint: "requires Docker" },
       { value: "custom", label: "Custom (enter process name)" },
     ],
   });
@@ -45,8 +49,13 @@ export async function selectProcess(): Promise<ProcessSelection | null> {
 
   let processNames: string[];
   let selectedType = processType as string;
+  let dockerMode = false;
 
-  if (processType === "custom") {
+  if (processType === "docker") {
+    // Docker mode - we'll monitor all processes and filter by container PIDs
+    dockerMode = true;
+    processNames = []; // Empty - will get all processes
+  } else if (processType === "custom") {
     const customName = await p.text({
       message: "Enter process name to monitor:",
       placeholder: "e.g., nginx, postgres, redis",
@@ -101,6 +110,7 @@ export async function selectProcess(): Promise<ProcessSelection | null> {
     processType: selectedType,
     processNames,
     filterPattern,
+    dockerMode,
   };
 }
 

@@ -14,6 +14,11 @@ program
   .option("-f, --filter <pattern>", "Filter by script/command pattern")
   .option("-i, --interval <ms>", "Refresh interval in milliseconds", "2000")
   .option("-e, --export", "Export to JSON on exit", false)
+  .option("-w, --web [port]", "Start web UI dashboard on specified port (default: 3000)")
+  .option("--tree", "Show process tree view with parent/child relationships")
+  .option("--alert-cpu <percent>", "Alert when CPU exceeds threshold (e.g., 80)")
+  .option("--alert-memory <mb>", "Alert when memory exceeds threshold in MB (e.g., 500)")
+  .option("--docker", "Monitor only Docker container processes")
   .parse();
 
 const options = program.opts();
@@ -46,6 +51,7 @@ async function main(): Promise<void> {
   let processType: string;
   let processNames: string[];
   let filterPattern: string | undefined;
+  let dockerMode = options.docker || false;
 
   // Check if process type was provided via CLI
   if (options.process) {
@@ -63,7 +69,15 @@ async function main(): Promise<void> {
     processType = selection.processType;
     processNames = selection.processNames;
     filterPattern = selection.filterPattern;
+    dockerMode = selection.dockerMode || dockerMode;
   }
+
+  // Parse alert thresholds
+  const alertCpu = options.alertCpu ? parseFloat(options.alertCpu) : undefined;
+  const alertMemory = options.alertMemory ? parseFloat(options.alertMemory) : undefined;
+
+  // Parse web port
+  const webPort = options.web === true ? 3000 : options.web ? parseInt(options.web, 10) : undefined;
 
   // Start monitoring
   await startMonitor({
@@ -72,6 +86,11 @@ async function main(): Promise<void> {
     filterPattern,
     interval,
     exportOnExit: options.export,
+    webPort,
+    treeView: options.tree,
+    alertCpu,
+    alertMemory,
+    dockerOnly: dockerMode,
   });
 }
 

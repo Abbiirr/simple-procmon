@@ -1,6 +1,10 @@
 import { getProcesses, extractScriptName, formatScriptName, getProcessStats, getProcessCommandLine } from "./process.js";
 import { renderTable, renderSummary, showCursor, renderTraceView, renderTraceGraphs, type ProcessHistory } from "./display.js";
 import { exportToJSON, exportTraceToCSV, formatDuration } from "./export.js";
+import { startWebServer, updateWebState, setWebStartTime } from "./web.js";
+import { checkAlerts, displayAlerts, renderAlertsSummary, type AlertConfig } from "./alerts.js";
+import { buildProcessTree, renderTreeView } from "./tree.js";
+import { isDockerAvailable, getDockerContainers, displayDockerStatus } from "./docker.js";
 import pc from "picocolors";
 import psList from "ps-list";
 
@@ -10,6 +14,11 @@ export interface MonitorOptions {
   filterPattern?: string;
   interval: number;
   exportOnExit: boolean;
+  webPort?: number;
+  treeView?: boolean;
+  alertCpu?: number;
+  alertMemory?: number;
+  dockerOnly?: boolean;
 }
 
 export interface TraceOptions {
@@ -38,11 +47,49 @@ let startTime: number;
  * Start the monitoring loop
  */
 export async function startMonitor(options: MonitorOptions): Promise<void> {
-  const { processType, processNames, filterPattern, interval, exportOnExit } = options;
+  const {
+    processType,
+    processNames,
+    filterPattern,
+    interval,
+    exportOnExit,
+    webPort,
+    treeView,
+    alertCpu,
+    alertMemory,
+    dockerOnly,
+  } = options;
 
   isRunning = true;
   startTime = Date.now();
   history = new Map();
+
+  // Docker mode setup
+  let dockerPids: number[] = [];
+  if (dockerOnly) {
+    if (!isDockerAvailable()) {
+      console.error(pc.red("  Error: Docker is not available or not running"));
+      process.exit(1);
+    }
+    displayDockerStatus();
+  }
+
+  // Alert configuration
+  const alertConfig: AlertConfig = {};
+  if (alertCpu !== undefined) {
+    alertConfig.cpuThreshold = alertCpu;
+    console.log(pc.yellow(`  Alert: CPU threshold set to ${alertCpu}%`));
+  }
+  if (alertMemory !== undefined) {
+    alertConfig.memoryThreshold = alertMemory;
+    console.log(pc.yellow(`  Alert: Memory threshold set to ${alertMemory} MB`));
+  }
+
+  // Start web server if requested
+  if (webPort) {
+    await startWebServer(webPort);
+    setWebStartTime(startTime);
+  }
 
   // Setup signal handlers
   const cleanup = () => {
@@ -55,6 +102,11 @@ export async function startMonitor(options: MonitorOptions): Promise<void> {
     );
 
     renderSummary(history);
+
+    // Show alerts summary if alerts were configured
+    if (alertCpu !== undefined || alertMemory !== undefined) {
+      renderAlertsSummary();
+    }
 
     if (exportOnExit) {
       exportToJSON(history, processType, filterPattern, startTime);
@@ -72,7 +124,18 @@ export async function startMonitor(options: MonitorOptions): Promise<void> {
   // Main loop
   while (isRunning) {
     try {
-      const processes = await getProcesses(processNames, filterPattern);
+      // Get all processes for tree view
+      const allProcesses = treeView ? await psList() : [];
+
+      // Get filtered processes
+      let processes = await getProcesses(processNames, filterPattern);
+
+      // Docker filtering
+      if (dockerOnly) {
+        const containers = getDockerContainers();
+        dockerPids = containers.map((c) => c.pid);
+        processes = processes.filter((p) => dockerPids.includes(p.pid));
+      }
 
       // Update history
       for (const proc of processes) {
@@ -82,7 +145,7 @@ export async function startMonitor(options: MonitorOptions): Promise<void> {
           // Use script name if available, otherwise process name
           const scriptName = extractScriptName(proc.cmd);
           const displayName = scriptName
-            ? formatScriptName(scriptName, 44)
+            ? formatScriptName(scriptName, 59)
             : proc.name;
 
           hist = {
@@ -114,8 +177,30 @@ export async function startMonitor(options: MonitorOptions): Promise<void> {
         }
       }
 
-      // Render the display
-      renderTable(processes, history, processType, filterPattern);
+      // Check alerts
+      if (alertCpu !== undefined || alertMemory !== undefined) {
+        const processNameMap = new Map<number, string>();
+        for (const [pid, hist] of history) {
+          processNameMap.set(pid, hist.name);
+        }
+        const alerts = checkAlerts(processes, alertConfig, processNameMap);
+        if (alerts.length > 0) {
+          displayAlerts(alerts);
+        }
+      }
+
+      // Update web state if web server is running
+      if (webPort) {
+        updateWebState(processes, history, processType, filterPattern);
+      }
+
+      // Render the display (tree view or table view)
+      if (treeView) {
+        const tree = buildProcessTree(processes, allProcesses);
+        renderTreeView(tree, processType, filterPattern);
+      } else {
+        renderTable(processes, history, processType, filterPattern);
+      }
 
       // Wait for next interval
       await sleep(interval);
@@ -165,10 +250,10 @@ export async function startTrace(options: TraceOptions): Promise<void> {
   // Get command line (use WMIC on Windows since ps-list doesn't provide it)
   const cmdLine = proc.cmd || getProcessCommandLine(pid);
 
-  // Extract script name
+  // Extract script name - use longer display for trace mode
   const scriptName = extractScriptName(cmdLine);
   const displayName = scriptName
-    ? formatScriptName(scriptName, 60)
+    ? formatScriptName(scriptName, 80)
     : proc.name;
 
   const traceHistory: TraceHistory = {
